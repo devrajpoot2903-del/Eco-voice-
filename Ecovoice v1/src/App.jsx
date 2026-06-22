@@ -48,8 +48,9 @@ export default function App() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [geminiWarn, setGeminiWarn] = useState(null);
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
-  const [chatMode, setChatMode] = useState(false);   // E1/E2
-  const [searchQuery, setSearchQuery] = useState('');      // D3
+  const [chatMode, setChatMode] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sidebarOpen, setSidebarOpen] = useState(false); // mobile sidebar toggle
 
   const {
     tasks,
@@ -91,7 +92,6 @@ export default function App() {
       ...prev,
       { id: Date.now() + 1, type: 'ai', text, timestamp: Date.now() },
     ]);
-    // Turn-based: tell SR we are speaking, restart mic after TTS + 750ms
     srRef.current?.enterSpeaking();
     speak(text, {
       onEnd: () => { srRef.current?.startAfterDelay(750); },
@@ -134,7 +134,6 @@ export default function App() {
 
     switch (action.intent) {
       case 'CREATE_TASK':
-        // Undo create = delete the task that was just created
         if (action.snapshot && action.snapshot.length > 0) {
           const label = action.snapshot[0].label;
           deleteByQuery(label);
@@ -143,31 +142,22 @@ export default function App() {
           aiReply('Nothing to undo.');
         }
         break;
-
       case 'DELETE_TASK':
-        // Undo delete = restore the deleted task(s)
         restoreTasks(action.snapshot);
         aiReply('Undone. Task restored.');
         break;
-
       case 'COMPLETE_TASK':
-        // Undo complete = uncomplete the tasks
         uncompleteByIds(action.snapshot.map((t) => t.id));
         aiReply('Undone. Task moved back to pending.');
         break;
-
       case 'PIN_TASK':
-        // Undo pin = unpin
         unpinByIds(action.snapshot.map((t) => t.id));
         aiReply('Undone. Task unpinned.');
         break;
-
       case 'UNPIN_TASK':
-        // Undo unpin = re-pin
         pinByIds(action.snapshot.map((t) => t.id));
         aiReply('Undone. Task pinned again.');
         break;
-
       default:
         aiReply('Nothing to undo.');
     }
@@ -192,7 +182,6 @@ export default function App() {
           { id: Date.now(), type: 'user', text, timestamp: Date.now() },
         ]);
 
-        // ── Dispatch ──────────────────────────────────────────────────────────
         let command;
         let source = 'ai';
         try {
@@ -208,7 +197,6 @@ export default function App() {
 
         console.log('  Detected intent:', command.type, '| source:', source);
 
-        // ── A3 — Gemini unavailability ────────────────────────────────────────
         if (command.type === 'GEMINI_UNAVAILABLE') {
           setGeminiWarn(command.response);
           setTimeout(() => setGeminiWarn(null), 8000);
@@ -219,7 +207,6 @@ export default function App() {
           setGeminiWarn(null);
         }
 
-        // ── A6 — Help ─────────────────────────────────────────────────────────
         if (command.type === 'SHOW_HELP') {
           setHelpOpen(true);
           srRef.current?.enterSpeaking();
@@ -231,7 +218,6 @@ export default function App() {
           return;
         }
 
-        // ── Guard: destructive action with no target ──────────────────────────
         if (command.type === 'MISSING_TASK_TARGET') {
           const prompt = command.prompt ?? 'Which task did you mean?';
           aiReply(prompt);
@@ -240,7 +226,6 @@ export default function App() {
           return;
         }
 
-        // ── B5 — DELETE_ALL: gate behind confirmation modal ───────────────────
         if (command.type === 'DELETE_ALL_TASKS') {
           pendingDeleteAll.current = text;
           setConfirmDeleteAll(true);
@@ -253,7 +238,6 @@ export default function App() {
           return;
         }
 
-        // ── D1 — UNDO ─────────────────────────────────────────────────────────
         if (command.type === 'UNDO') {
           executeUndo();
           recordCommand({ transcript: text, intent: 'UNDO', result: 'ok', source });
@@ -261,7 +245,6 @@ export default function App() {
           return;
         }
 
-        // ── D3 — SEARCH_TASKS ─────────────────────────────────────────────────
         if (command.type === 'SEARCH_TASKS') {
           const q = command.query ?? '';
           setSearchQuery(q);
@@ -281,7 +264,6 @@ export default function App() {
           return;
         }
 
-        // ── Bug 2: CLEAR_SEARCH ─────────────────────────────────────────────────
         if (command.type === 'CLEAR_SEARCH') {
           setSearchQuery('');
           console.debug('[EcoVoice DEBUG] CLEAR_SEARCH — total tasks:', tasksRef.current.length);
@@ -291,7 +273,6 @@ export default function App() {
           return;
         }
 
-        // ── E1 — ENTER_CHAT_MODE ──────────────────────────────────────────────
         if (command.type === 'ENTER_CHAT_MODE') {
           setChatMode(true);
           aiReply('Chat mode activated. Ask me anything.');
@@ -300,7 +281,6 @@ export default function App() {
           return;
         }
 
-        // ── E2 — EXIT_CHAT_MODE ───────────────────────────────────────────────
         if (command.type === 'EXIT_CHAT_MODE') {
           setChatMode(false);
           aiReply('Task mode activated. Ready for your commands.');
@@ -309,7 +289,6 @@ export default function App() {
           return;
         }
 
-        // ── E3 — SELF_INTRO ───────────────────────────────────────────────────
         if (command.type === 'SELF_INTRO') {
           aiReply(SELF_INTRO_TEXT);
           recordCommand({ transcript: text, intent: 'SELF_INTRO', result: 'ok', source });
@@ -317,7 +296,6 @@ export default function App() {
           return;
         }
 
-        // ── Execute task actions ──────────────────────────────────────────────
         let result = 'ok';
         let feedbackText = command.response ?? null;
         let handlerCalled = command.type;
@@ -330,10 +308,9 @@ export default function App() {
             const newTaskSnapshot = [{ label: command.task.trim() }];
             addTask(command.task, { source: 'voice', priority: command.priority ?? 'normal' });
             recordUndoAction('CREATE_TASK', command.task, newTaskSnapshot);
-            setSearchQuery(''); // Bug 2: clear filter after mutation
+            setSearchQuery('');
             if (!feedbackText) feedbackText = VOICE_FEEDBACK.CREATE_TASK.ok(command.task);
           }
-
         } else if (command.type === 'DELETE_TASK') {
           const liveTasks = tasksRef.current;
           const affected = liveTasks.filter((t) =>
@@ -341,9 +318,8 @@ export default function App() {
           );
           deleteByQuery(command.query);
           recordUndoAction('DELETE_TASK', command.query, affected);
-          setSearchQuery(''); // Bug 2
+          setSearchQuery('');
           if (!feedbackText) feedbackText = VOICE_FEEDBACK.DELETE_TASK.ok();
-
         } else if (command.type === 'COMPLETE_TASK') {
           const liveTasks = tasksRef.current;
           const affected = liveTasks.filter((t) =>
@@ -351,14 +327,12 @@ export default function App() {
           );
           completeByQuery(command.query);
           recordUndoAction('COMPLETE_TASK', command.query, affected);
-          setSearchQuery(''); // Bug 2
+          setSearchQuery('');
           if (!feedbackText) feedbackText = VOICE_FEEDBACK.COMPLETE_TASK.ok();
-
         } else if (command.type === 'UNCOMPLETE_TASK') {
           uncompleteByQuery(command.query);
-          setSearchQuery(''); // Bug 2
+          setSearchQuery('');
           if (!feedbackText) feedbackText = VOICE_FEEDBACK.UNCOMPLETE_TASK.ok();
-
         } else if (command.type === 'PIN_TASK') {
           const liveTasks = tasksRef.current;
           const affected = liveTasks.filter((t) =>
@@ -366,9 +340,8 @@ export default function App() {
           );
           pinByQuery(command.query);
           recordUndoAction('PIN_TASK', command.query, affected);
-          setSearchQuery(''); // Bug 2
+          setSearchQuery('');
           if (!feedbackText) feedbackText = VOICE_FEEDBACK.PIN_TASK.ok();
-
         } else if (command.type === 'UNPIN_TASK') {
           const liveTasks = tasksRef.current;
           const affected = liveTasks.filter((t) =>
@@ -376,14 +349,12 @@ export default function App() {
           );
           unpinByQuery(command.query);
           recordUndoAction('UNPIN_TASK', command.query, affected);
-          setSearchQuery(''); // Bug 2
+          setSearchQuery('');
           if (!feedbackText) feedbackText = VOICE_FEEDBACK.UNPIN_TASK.ok();
-
         } else if (command.type === 'SET_PRIORITY') {
           setPriorityByQuery(command.query, command.priority);
-          setSearchQuery(''); // Bug 2
+          setSearchQuery('');
           if (!feedbackText) feedbackText = VOICE_FEEDBACK.SET_PRIORITY.ok();
-
         } else if (command.type === 'COMPLETE_ALL_TASKS') {
           const liveTasks = tasksRef.current;
           const pending = liveTasks.filter((t) => !t.done).length;
@@ -395,20 +366,17 @@ export default function App() {
             completeAllTasks();
             feedbackText = VOICE_FEEDBACK.COMPLETE_ALL_TASKS.ok(pending);
           }
-
         } else if (command.type === 'UNKNOWN') {
           result = 'unknown';
           handlerCalled = 'none';
           if (!feedbackText) feedbackText = "I didn't quite catch that. Try saying help to see all commands.";
         }
 
-        // ── DEBUG log ─────────────────────────────────────────────────────────
         console.log('  Handler called  :', handlerCalled);
         console.log('  Execution result:', result);
         console.log('  Voice feedback  :', feedbackText ?? '(none)');
         console.groupEnd();
 
-        // ── A4 — Record command history ───────────────────────────────────────
         recordCommand({
           transcript: text,
           intent: command.type,
@@ -417,7 +385,6 @@ export default function App() {
           source,
         });
 
-        // ── B6 — Speak + show response AFTER action ───────────────────────────
         if (feedbackText) {
           aiReply(feedbackText);
         }
@@ -432,10 +399,8 @@ export default function App() {
     srRef.current = sr;
     return () => srRef.current?.stop();
 
-    // tasks intentionally NOT in deps — accessed via tasksRef.current
   }, [addTask, deleteByQuery, completeByQuery, uncompleteByQuery, pinByQuery, unpinByQuery, setPriorityByQuery, deleteAllTasks, completeAllTasks, executeUndo, aiReply]);
 
-  // chatMode ref so onResult closure can read it without re-creating the effect
   const chatModeRef = useRef(chatMode);
   useEffect(() => { chatModeRef.current = chatMode; });
 
@@ -447,11 +412,10 @@ export default function App() {
     if (micStatus === RecognitionState.IDLE || micStatus === RecognitionState.ERROR) {
       sr.start();
     } else {
-      sr.stop(); // stop() handles LISTENING, PROCESSING, and SPEAKING states
+      sr.stop();
     }
   };
 
-  // ── Derived values ─────────────────────────────────────────────────────────
   const isListening = micStatus === RecognitionState.LISTENING
     || micStatus === RecognitionState.PROCESSING
     || micStatus === RecognitionState.SPEAKING;
@@ -459,12 +423,34 @@ export default function App() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="w-full h-full flex items-center justify-center bg-[#1a1a2e] p-4">
-      <div className="w-full max-w-6xl h-full max-h-[720px] rounded-3xl overflow-hidden shadow-2xl flex border border-white/10">
+    <div className="w-full min-h-screen flex items-center justify-center bg-[#1a1a2e] md:p-4">
 
-        <Sidebar activeNav={activeNav} onNav={setActiveNav} onNewTask={() => { }} />
+      {/* ── Mobile sidebar overlay ── */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/50 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
 
-        <div className="flex-1 flex flex-col bg-cream min-w-0 overflow-hidden">
+      <div className="w-full md:max-w-6xl h-screen md:h-auto md:max-h-[720px] md:rounded-3xl overflow-hidden shadow-2xl flex md:border md:border-white/10">
+
+        {/* ── Sidebar — hidden on mobile, slides in as overlay ── */}
+        <div className={`
+          fixed lg:static inset-y-0 left-0 z-50
+          transform transition-transform duration-300 ease-in-out
+          ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+          lg:translate-x-0 lg:flex
+        `}>
+          <Sidebar
+            activeNav={activeNav}
+            onNav={(id) => { setActiveNav(id); setSidebarOpen(false); }}
+            onNewTask={() => setSidebarOpen(false)}
+          />
+        </div>
+
+        {/* ── Main content area ── */}
+        <div className="flex-1 flex flex-col bg-cream min-w-0 overflow-hidden w-full">
 
           {/* Unsupported browser banner */}
           {unsupported && (
@@ -473,20 +459,20 @@ export default function App() {
             </div>
           )}
 
-          {/* A3 — Gemini unavailability banner */}
+          {/* Gemini unavailability banner */}
           {geminiWarn && (
             <div className="bg-amber-50 border-b border-amber-200 text-amber-700 text-xs text-center py-2 px-4 shrink-0 flex items-center justify-center gap-2">
               <span>⚠️</span>
-              <span>{geminiWarn}</span>
-              <button onClick={() => setGeminiWarn(null)} className="ml-2 text-amber-500 hover:text-amber-700 font-bold" aria-label="Dismiss Gemini warning">✕</button>
+              <span className="truncate">{geminiWarn}</span>
+              <button onClick={() => setGeminiWarn(null)} className="ml-2 text-amber-500 hover:text-amber-700 font-bold shrink-0" aria-label="Dismiss Gemini warning">✕</button>
             </div>
           )}
 
-          {/* E1 — Chat Mode indicator badge */}
+          {/* Chat Mode indicator */}
           {chatMode && (
             <div className="bg-violet-50 border-b border-violet-200 text-violet-700 text-xs text-center py-1.5 px-4 shrink-0 flex items-center justify-center gap-2 font-semibold tracking-wide uppercase">
               <span>💬</span>
-              <span>Chat Mode Active</span>
+              <span>Chat Mode</span>
               <button
                 onClick={() => { setChatMode(false); aiReply('Task mode activated.'); }}
                 className="ml-2 text-violet-400 hover:text-violet-700 font-bold normal-case tracking-normal text-xs"
@@ -497,10 +483,14 @@ export default function App() {
             </div>
           )}
 
-          <TopBar isListening={isListening} />
+          <TopBar
+            isListening={isListening}
+            onMenuClick={() => setSidebarOpen(true)}
+          />
 
-          <div className="flex flex-1 overflow-hidden gap-0">
-            <div className="flex-1 flex flex-col overflow-y-auto px-8 pb-6 min-w-0">
+          <div className="flex flex-1 overflow-hidden">
+            {/* Task panel */}
+            <div className="flex-1 flex flex-col overflow-y-auto px-4 sm:px-6 lg:px-8 pb-6 min-w-0">
               <VoiceHero status={micStatus} onClick={handleMicClick} lastSpoken={lastSpoken} />
               <TaskBoard
                 tasks={tasks}
@@ -510,18 +500,67 @@ export default function App() {
               />
             </div>
 
-            <aside className="w-64 shrink-0 flex flex-col gap-4 overflow-y-auto px-4 pt-2 pb-6 border-l border-stone-200/60 bg-parchment/40">
+            {/* Aside — hidden on mobile/tablet, visible on lg+ */}
+            <aside className="hidden lg:flex w-64 shrink-0 flex-col gap-4 overflow-y-auto px-4 pt-2 pb-6 border-l border-stone-200/60 bg-parchment/40">
               <DailyProgress tasks={tasks} />
               <ActivityFeed entries={transcript} />
             </aside>
           </div>
+
+          {/* ── Mobile bottom tab bar ── */}
+          <nav className="lg:hidden shrink-0 flex items-center justify-around border-t border-stone-200 bg-cream px-2 py-2 safe-area-pb">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl text-stone-500 hover:text-forest-700 hover:bg-forest-50 transition-colors"
+              aria-label="Open menu"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+              <span className="text-[10px] font-medium">Menu</span>
+            </button>
+
+            <button
+              onClick={handleMicClick}
+              className={`flex flex-col items-center gap-0.5 px-4 py-1.5 rounded-xl transition-colors ${
+                isListening ? 'text-forest-700 bg-forest-50' : 'text-stone-500'
+              }`}
+              aria-label="Toggle mic"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8" />
+              </svg>
+              <span className="text-[10px] font-medium">{isListening ? 'Live' : 'Mic'}</span>
+            </button>
+
+            <button
+              onClick={() => setHelpOpen(true)}
+              className="flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl text-stone-500 hover:text-forest-700 hover:bg-forest-50 transition-colors"
+              aria-label="Help"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span className="text-[10px] font-medium">Help</span>
+            </button>
+
+            <button
+              onClick={() => {/* activity drawer future */}}
+              className="flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl text-stone-500 hover:text-forest-700 hover:bg-forest-50 transition-colors"
+              aria-label="Activity"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+              <span className="text-[10px] font-medium">Activity</span>
+            </button>
+          </nav>
         </div>
       </div>
 
-      {/* A6 — Help Panel */}
       <HelpPanel open={helpOpen} onClose={() => setHelpOpen(false)} />
 
-      {/* B5 — Delete All Confirmation Modal */}
       <ConfirmModal
         open={confirmDeleteAll}
         title="Delete All Tasks?"

@@ -1,5 +1,5 @@
 import React from 'react';
-import { CalendarDays, RotateCcw, Archive, Settings, Plus, Leaf } from 'lucide-react';
+import { CalendarDays, RotateCcw, Archive, Settings, Plus, Leaf, X } from 'lucide-react';
 
 const NAV_ITEMS = [
   { icon: CalendarDays, label: 'Today',    id: 'today' },
@@ -12,23 +12,24 @@ const BOTTOM_NAV = [
   { icon: Settings, label: 'Settings', id: 'settings' },
 ];
 
-/**
- * Sidebar — left navigation panel.
- * Pure presentational component; no business logic.
- *
- * Props:
- *   activeNav  — currently active nav id
- *   onNav      — (id) => void
- *   onNewTask  — () => void  (for the + New Task button)
- */
 export default function Sidebar({ activeNav = 'today', onNav, onNewTask }) {
   return (
     <aside className="w-60 shrink-0 bg-cream flex flex-col h-full border-r border-stone-200/80">
-      {/* Brand */}
+      {/* Brand + close button on mobile */}
       <div className="px-6 pt-7 pb-6">
-        <div className="flex items-center gap-2 mb-1">
-          <Leaf className="w-4 h-4 text-forest-700" />
-          <span className="text-sm font-bold text-forest-900 tracking-tight">EcoVoice</span>
+        <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center gap-2">
+            <Leaf className="w-4 h-4 text-forest-700" />
+            <span className="text-sm font-bold text-forest-900 tracking-tight">EcoVoice</span>
+          </div>
+          {/* Close button — visible only on mobile when sidebar is open */}
+          <button
+            onClick={onNewTask}
+            className="lg:hidden w-7 h-7 flex items-center justify-center rounded-full text-stone-400 hover:text-stone-600 hover:bg-stone-100 transition-colors"
+            aria-label="Close menu"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
         <p className="text-[11px] text-stone-400 leading-none pl-6">Your Voice, Organized</p>
 
