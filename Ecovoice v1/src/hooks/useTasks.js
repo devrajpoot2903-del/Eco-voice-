@@ -67,8 +67,10 @@ function migrateTask(t) {
   return {
     source:   'voice',
     priority: 'normal',
+    archived: false,
     ...t,
     pinned: t.pinned ?? false,
+    archived: t.archived ?? false,
   };
 }
 
@@ -133,7 +135,18 @@ export function useTasks() {
       (Array.isArray(rawTasks) ? rawTasks : [])
         .filter(isValidTask)
         .map(migrateTask)
+        .filter((t) => !t.archived)
         .sort(sortTasks),
+    [rawTasks],
+  );
+
+  const archivedTasks = useMemo(
+    () =>
+      (Array.isArray(rawTasks) ? rawTasks : [])
+        .filter(isValidTask)
+        .map(migrateTask)
+        .filter((t) => t.archived)
+        .sort((a, b) => b.createdAt - a.createdAt),
     [rawTasks],
   );
 
@@ -169,7 +182,7 @@ export function useTasks() {
           id:        now,
           label:     cleanLabel,
           done:      false,
-          pinned:    opts.priority === 'high',
+          pinned:    opts.priority === 'high' || opts.pinned === true,
           source:    opts.source   ?? 'voice',
           priority:  opts.priority ?? 'normal',
           createdAt: now,
@@ -334,8 +347,39 @@ export function useTasks() {
     );
   }, [setTasks]);
 
+  const archiveTask = useCallback((id) => {
+    setTasks((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, archived: true } : t))
+    );
+  }, [setTasks]);
+
+  const restoreTask = useCallback((id) => {
+    setTasks((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, archived: false } : t))
+    );
+  }, [setTasks]);
+
+  const togglePriority = useCallback((id) => {
+    setTasks((prev) =>
+      prev.map((t) => {
+        if (t.id !== id) return t;
+        const newPriority = t.priority === 'high' ? 'normal' : 'high';
+        return {
+          ...t,
+          priority: newPriority,
+          pinned: newPriority === 'high' ? true : t.pinned,
+        };
+      })
+    );
+  }, [setTasks]);
+
+  const deleteTask = useCallback((id) => {
+    setTasks((prev) => prev.filter((t) => t.id !== id));
+  }, [setTasks]);
+
   return {
     tasks,
+    archivedTasks,
     addTask,
     deleteByQuery,
     completeByQuery,
@@ -347,6 +391,10 @@ export function useTasks() {
     setPriorityByQuery,
     deleteAllTasks,
     completeAllTasks,
+    archiveTask,
+    restoreTask,
+    togglePriority,
+    deleteTask,
     // D1 — undo helpers
     restoreTasks,
     uncompleteByIds,

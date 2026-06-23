@@ -62,19 +62,16 @@ export function createSpeechRecognition({ onStateChange, onResult, onError }) {
 
   recognition.onstart = () => {
     // Only honour onstart when we intended to be LISTENING.
-    // If state is SPEAKING/IDLE/ERROR the session must have leaked — abort it.
-    if (state !== RecognitionState.LISTENING && state !== RecognitionState.IDLE) {
+    // If state is not LISTENING the session must have leaked — abort it.
+    if (state !== RecognitionState.LISTENING) {
       console.debug('[EcoVoice SR] onstart in wrong state, aborting leaked session');
       try { recognition.abort(); } catch (_) {}
       return;
     }
-    transition(RecognitionState.LISTENING);
   };
 
   recognition.onspeechend = () => {
-    if (state === RecognitionState.LISTENING) {
-      transition(RecognitionState.PROCESSING);
-    }
+    // No-op: avoid premature transition to PROCESSING to prevent getting stuck on click sounds or silence.
   };
 
   recognition.onresult = (event) => {

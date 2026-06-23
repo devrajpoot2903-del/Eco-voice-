@@ -67,7 +67,11 @@ export default function Sidebar({ activeNav = 'today', onNav, onNewTask }) {
           <button
             key={id}
             onClick={() => onNav?.(id)}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-stone-400 hover:bg-stone-100 hover:text-stone-600 transition-all duration-150"
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 ${
+              activeNav === id
+                ? 'bg-forest-100 text-forest-800'
+                : 'text-stone-400 hover:bg-stone-100 hover:text-stone-600'
+            }`}
           >
             <Icon className="w-4 h-4 shrink-0" />
             {label}

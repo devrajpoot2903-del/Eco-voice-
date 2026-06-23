@@ -7,7 +7,14 @@ import { Search, HelpCircle, Settings, Menu } from 'lucide-react';
  *   isListening  — boolean mic state
  *   onMenuClick  — () => void — opens mobile sidebar
  */
-export default function TopBar({ isListening, onMenuClick }) {
+export default function TopBar({
+  isListening,
+  onMenuClick,
+  searchQuery = '',
+  onSearchChange,
+  onHelpClick,
+  onSettingsClick,
+}) {
   return (
     <header className="flex items-center justify-between px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6 pb-3 shrink-0 gap-2">
       {/* Hamburger — mobile only */}
@@ -30,8 +37,9 @@ export default function TopBar({ isListening, onMenuClick }) {
           <input
             type="text"
             placeholder="Search tasks..."
+            value={searchQuery}
+            onChange={(e) => onSearchChange?.(e.target.value)}
             className="bg-transparent text-xs text-stone-600 placeholder-stone-400 outline-none w-full"
-            readOnly
           />
         </div>
 
@@ -48,10 +56,18 @@ export default function TopBar({ isListening, onMenuClick }) {
         </div>
 
         {/* Icons — hide on very small screens to prevent overflow */}
-        <button className="hidden sm:flex w-8 h-8 items-center justify-center rounded-full hover:bg-stone-100 text-stone-400 hover:text-stone-600 transition-colors shrink-0">
+        <button
+          onClick={onHelpClick}
+          className="hidden sm:flex w-8 h-8 items-center justify-center rounded-full hover:bg-stone-100 text-stone-400 hover:text-stone-600 transition-colors shrink-0"
+          title="Help Guide"
+        >
           <HelpCircle className="w-4 h-4" />
         </button>
-        <button className="hidden md:flex w-8 h-8 items-center justify-center rounded-full hover:bg-stone-100 text-stone-400 hover:text-stone-600 transition-colors shrink-0">
+        <button
+          onClick={onSettingsClick}
+          className="hidden md:flex w-8 h-8 items-center justify-center rounded-full hover:bg-stone-100 text-stone-400 hover:text-stone-600 transition-colors shrink-0"
+          title="Settings"
+        >
           <Settings className="w-4 h-4" />
         </button>
 

@@ -179,6 +179,28 @@ const INTENT_RULES = [
     ],
   },
 
+  // ── PIN_ALL_TASKS ──────────────────────────────────────────────────────────
+  // MUST appear before PIN_TASK — more specific.
+  {
+    intent: 'PIN_ALL_TASKS',
+    patterns: [
+      /^pin\s+all(\s+tasks?)?$/i,
+      /^star\s+all(\s+tasks?)?$/i,
+      /^mark\s+all(\s+tasks?)?\s+(as\s+)?(important|pinned|starred)$/i,
+    ],
+  },
+
+  // ── UNPIN_ALL_TASKS ────────────────────────────────────────────────────────
+  // MUST appear before UNPIN_TASK — more specific.
+  {
+    intent: 'UNPIN_ALL_TASKS',
+    patterns: [
+      /^unpin\s+all(\s+tasks?)?$/i,
+      /^unstar\s+all(\s+tasks?)?$/i,
+      /^mark\s+all(\s+tasks?)?\s+(as\s+)?(normal|unpinned|unstarred)$/i,
+    ],
+  },
+
   // ── PIN_TASK ───────────────────────────────────────────────────────────────
   {
     intent: 'PIN_TASK',
@@ -231,7 +253,7 @@ const INTENT_RULES = [
   {
     intent: 'DELETE_ALL_TASKS',
     patterns: [
-      /^delete\s+all(\s+tasks?)?$/i,
+      /^(permanently\s+)?delete\s+all(\s+tasks?)?$/i,
       /^remove\s+all(\s+tasks?)?$/i,
       /^clear\s+all(\s+tasks?)?$/i,
       /^wipe(\s+(all\s+)?tasks?)?$/i,
@@ -247,7 +269,18 @@ const INTENT_RULES = [
       /^complete\s+all(\s+tasks?)?$/i,
       /^finish\s+all(\s+tasks?)?$/i,
       /^done\s+all(\s+tasks?)?$/i,
-      /^mark\s+all\s+(as\s+)?(completed?|done|finished)$/i,
+      /^mark\s+all(\s+tasks?)?\s+(as\s+)?(completed?|done|finished)$/i,
+    ],
+  },
+
+  // ── ARCHIVE_ALL_TASKS ──────────────────────────────────────────────────────
+  // MUST appear before other tasks.
+  {
+    intent: 'ARCHIVE_ALL_TASKS',
+    patterns: [
+      /^archive\s+all(\s+tasks?)?$/i,
+      /^remove\s+all\s+tasks?\s+from\s+list\s+to\s+archive$/i,
+      /^move\s+all\s+tasks?\s+to\s+archive$/i,
     ],
   },
 
@@ -612,6 +645,9 @@ export function parseCommand(rawText) {
   if (intent === 'SELF_INTRO')      return { type: 'SELF_INTRO' };
   if (intent === 'DELETE_ALL_TASKS')  return { type: 'DELETE_ALL_TASKS' };
   if (intent === 'COMPLETE_ALL_TASKS') return { type: 'COMPLETE_ALL_TASKS' };
+  if (intent === 'ARCHIVE_ALL_TASKS') return { type: 'ARCHIVE_ALL_TASKS' };
+  if (intent === 'PIN_ALL_TASKS') return { type: 'PIN_ALL_TASKS' };
+  if (intent === 'UNPIN_ALL_TASKS') return { type: 'UNPIN_ALL_TASKS' };
   if (intent === 'CLEAR_SEARCH')    return { type: 'CLEAR_SEARCH' };  // Bug 2
 
   // ── D3 SEARCH_TASKS: extract query after keyword ───────────────────────────

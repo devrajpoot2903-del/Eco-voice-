@@ -11,7 +11,14 @@ import TaskCard from './TaskCard';
  *   onTogglePin — (id) => void
  *   searchQuery — string | null  — D3: highlight matching tasks
  */
-export default function TaskBoard({ tasks = [], onToggle, onTogglePin, searchQuery = '' }) {
+export default function TaskBoard({
+  tasks = [],
+  onToggle,
+  onTogglePin,
+  onTogglePriority,
+  onArchive,
+  searchQuery = '',
+}) {
   const q = (searchQuery ?? '').trim().toLowerCase();
 
   // D3 — when a search is active, show ALL tasks filtered to matches only
@@ -83,6 +90,8 @@ export default function TaskBoard({ tasks = [], onToggle, onTogglePin, searchQue
                 task={task}
                 onToggle={onToggle}
                 onTogglePin={onTogglePin}
+                onTogglePriority={onTogglePriority}
+                onArchive={onArchive}
                 highlighted={isSearching}
                 searchQuery={q}
                 LabelRenderer={Highlighted}
@@ -108,6 +117,8 @@ export default function TaskBoard({ tasks = [], onToggle, onTogglePin, searchQue
                 task={task}
                 onToggle={onToggle}
                 onTogglePin={onTogglePin}
+                onTogglePriority={onTogglePriority}
+                onArchive={onArchive}
                 highlighted={isSearching}
                 searchQuery={q}
                 LabelRenderer={Highlighted}
@@ -131,6 +142,8 @@ export default function TaskBoard({ tasks = [], onToggle, onTogglePin, searchQue
                 task={task}
                 onToggle={onToggle}
                 onTogglePin={onTogglePin}
+                onTogglePriority={onTogglePriority}
+                onArchive={onArchive}
                 highlighted={isSearching}
                 searchQuery={q}
                 LabelRenderer={Highlighted}

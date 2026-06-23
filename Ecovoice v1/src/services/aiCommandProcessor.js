@@ -1,9 +1,9 @@
 /**
  * aiCommandProcessor.js — EcoVoice AI Command Layer
  * ---------------------------------------------------
- * Uses Gemini 2.5 Flash to extract intents from natural language.
+ * Uses Groq (llama-3.3-70b-versatile) to extract intents from natural language.
  *
- * CONTRACT — every result now includes a `response` field:
+ * CONTRACT — every result includes a `response` field:
  *   { type: 'CREATE_TASK',    task: string,  priority: 'normal'|'high', response: string }
  *   { type: 'DELETE_TASK',    query: string, response: string }
  *   { type: 'COMPLETE_TASK',  query: string, response: string }
@@ -14,27 +14,38 @@
  *   { type: 'CHAT',           response: string }
  *   { type: 'UNKNOWN' }
  *
- * processWithAI(rawText) uses an internal session history (last 10 turns)
- * for multi-turn conversation memory via Gemini's chat API.
+ * processWithAI(rawText) uses an internal session history (last 10 turns).
+ * History is sent as OpenAI-compatible messages[] on every request
+ * (Groq uses stateless completions — history is reconstructed each call).
  *
- * parseCommand() from commandParser.js is the fallback when Gemini is
+ * parseCommand() from commandParser.js is the fallback when Groq is
  * unavailable or returns malformed JSON.
  */
 
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import Groq from 'groq-sdk';
 import { parseCommand } from './commandParser';
 
-// ─── Gemini client ─────────────────────────────────────────────────────────────
+// ─── Groq client ───────────────────────────────────────────────────────────────
 
-const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-const MODEL   = 'gemini-2.5-flash';
+const API_KEY = import.meta.env.VITE_GROQ_API_KEY;
+const MODEL   = 'llama-3.3-70b-versatile';
 
-let _genAI = null;
-function getGenAI() {
-  if (!_genAI && API_KEY && API_KEY !== 'your_gemini_api_key_here') {
-    _genAI = new GoogleGenerativeAI(API_KEY);
+// ─── Startup key detection log ────────────────────────────────────────────────
+if (API_KEY && API_KEY !== 'your_groq_api_key_here') {
+  console.log('[EcoVoice/AI] API key detected — Groq AI layer is active.');
+} else {
+  console.warn('[EcoVoice/AI] API key missing — all requests will fall back to rule-based parser.');
+}
+
+let _groq = null;
+function getGroq() {
+  if (!_groq && API_KEY && API_KEY !== 'your_groq_api_key_here') {
+    _groq = new Groq({
+      apiKey:    API_KEY,
+      dangerouslyAllowBrowser: true, // required for Vite/browser environments
+    });
   }
-  return _genAI;
+  return _groq;
 }
 
 // ─── System prompt ─────────────────────────────────────────────────────────────
@@ -136,7 +147,10 @@ CHAT (what can you do) → "I can create, complete, delete, pin, and prioritise 
 
 /**
  * In-memory conversation history — last MAX_HISTORY turn pairs.
- * Each pair = { role: 'user', ... } + { role: 'model', ... }
+ * Stored in Gemini-compatible format internally:
+ *   { role: 'user' | 'model', parts: [{ text: string }] }
+ * Mapped to OpenAI/Groq format on each request:
+ *   { role: 'user' | 'assistant', content: string }
  */
 const MAX_HISTORY = 10;
 const _sessionHistory = [];
@@ -160,6 +174,23 @@ function pushHistory(userText, modelJSON) {
   }
 }
 
+/**
+ * Map internal session history to Groq/OpenAI messages[] format.
+ * Gemini uses role 'model' — Groq/OpenAI uses role 'assistant'.
+ */
+function buildMessages(userText) {
+  const historyMessages = _sessionHistory.map((entry) => ({
+    role:    entry.role === 'model' ? 'assistant' : 'user',
+    content: entry.parts[0].text,
+  }));
+
+  return [
+    { role: 'system', content: SYSTEM_PROMPT },
+    ...historyMessages,
+    { role: 'user',   content: userText },
+  ];
+}
+
 // ─── JSON extractor ────────────────────────────────────────────────────────────
 
 function extractJSON(raw) {
@@ -177,10 +208,6 @@ function extractJSON(raw) {
 
 // ─── Missing target helper ────────────────────────────────────────────────────
 
-/**
- * The prompts spoken when a destructive command is issued without a target.
- * Keyed by intent name.
- */
 const MISSING_TARGET_PROMPTS = {
   DELETE_TASK:     'Which task would you like me to delete?',
   COMPLETE_TASK:   'Which task should I mark as complete?',
@@ -190,20 +217,15 @@ const MISSING_TARGET_PROMPTS = {
   SET_PRIORITY:    'Which task should I update the priority for?',
 };
 
-/**
- * Return a MISSING_TASK_TARGET command for a given intent.
- * @param {string} intent
- * @returns {object}
- */
 function missingTarget(intent) {
   return {
     type:   'MISSING_TASK_TARGET',
-    intent, // original intent, for logging
+    intent,
     prompt: MISSING_TARGET_PROMPTS[intent] ?? 'Which task did you mean?',
   };
 }
 
-// ─── Gemini JSON → internal command object ─────────────────────────────────────
+// ─── Groq JSON → internal command object ──────────────────────────────────────
 
 function mapToCommand(json) {
   if (!json || !json.intent) return { type: 'UNKNOWN' };
@@ -215,8 +237,8 @@ function mapToCommand(json) {
   switch (json.intent) {
     case 'CREATE_TASK':
       return {
-        type: 'CREATE_TASK',
-        task: json.task ?? '',
+        type:     'CREATE_TASK',
+        task:     json.task ?? '',
         priority: json.priority === 'high' ? 'high' : 'normal',
         response,
       };
@@ -255,7 +277,7 @@ function mapToCommand(json) {
       const query = (json.task ?? '').trim();
       if (!query) return missingTarget('SET_PRIORITY');
       return {
-        type: 'SET_PRIORITY',
+        type:     'SET_PRIORITY',
         query,
         priority: json.priority === 'high' ? 'high' : 'normal',
         response,
@@ -264,6 +286,21 @@ function mapToCommand(json) {
 
     case 'CHAT':
       return { type: 'CHAT', response };
+
+    case 'DELETE_ALL_TASKS':
+      return { type: 'DELETE_ALL_TASKS', response };
+
+    case 'COMPLETE_ALL_TASKS':
+      return { type: 'COMPLETE_ALL_TASKS', response };
+
+    case 'ARCHIVE_ALL_TASKS':
+      return { type: 'ARCHIVE_ALL_TASKS', response };
+
+    case 'PIN_ALL_TASKS':
+      return { type: 'PIN_ALL_TASKS', response };
+
+    case 'UNPIN_ALL_TASKS':
+      return { type: 'UNPIN_ALL_TASKS', response };
 
     default:
       return { type: 'UNKNOWN' };
@@ -277,23 +314,26 @@ let _consecutiveFailures = 0;
 const MAX_FAILURES_BEFORE_WARN = 2;
 
 /**
- * Returns a user-visible status object for the Gemini connection.
+ * Returns a user-visible status object for the Groq connection.
  * @returns {{ available: boolean, failing: boolean }}
  */
-export function geminiStatus() {
+export function groqStatus() {
   return {
     available: isAIAvailable(),
     failing:   _consecutiveFailures >= MAX_FAILURES_BEFORE_WARN,
   };
 }
 
+// Keep legacy export name so nothing breaks if anything imports geminiStatus
+export { groqStatus as geminiStatus };
+
 /**
- * Process a natural-language string through Gemini 2.5 Flash.
+ * Process a natural-language string through Groq llama-3.3-70b-versatile.
  *
- * A3 — On repeated Gemini failures the function returns a GEMINI_UNAVAILABLE
- * command so App.jsx can display a user-friendly message without freezing.
+ * A3 — On repeated failures returns GEMINI_UNAVAILABLE (type name kept for
+ * App.jsx compatibility) so the UI can display a user-friendly message.
  *
- * Falls back to parseCommand() (no response field) when Gemini is unavailable.
+ * Falls back to parseCommand() when Groq is unavailable or JSON is malformed.
  *
  * @param {string} rawText
  * @returns {Promise<object>}
@@ -303,38 +343,44 @@ export async function processWithAI(rawText) {
     return { type: 'UNKNOWN' };
   }
 
-  const genAI = getGenAI();
+  console.log('[AI STEP 1] processWithAI called with:', rawText);
 
-  if (!genAI) {
-    console.warn('[EcoVoice/AI] No Gemini API key — using rule-based parser as fallback.');
+  const groq = getGroq();
+
+  if (!groq) {
+    console.warn('[EcoVoice/AI] No Groq API key — using rule-based parser as fallback.');
     return parseCommand(rawText);
   }
 
   try {
-    const model = genAI.getGenerativeModel({
-      model: MODEL,
-      systemInstruction: SYSTEM_PROMPT,
+    const messages = buildMessages(rawText.trim());
+
+    console.log('[AI STEP 2] Sending request to Groq. Message count:', messages.length);
+
+    const completion = await groq.chat.completions.create({
+      model:           MODEL,
+      messages,
+      temperature:     0.2,   // low = deterministic JSON
+      max_tokens:      300,   // JSON responses are short
+      response_format: { type: 'json_object' }, // enforce pure JSON output
     });
 
-    // Use Gemini chat API with rolling session history
-    const chat = model.startChat({
-      history: getSessionHistory(),
-    });
+    const raw = completion.choices[0]?.message?.content ?? '';
 
-    const result = await chat.sendMessage(rawText.trim());
-    const raw    = result.response.text();
-
-    console.debug('[EcoVoice/AI] Raw Gemini response:', raw);
+    console.log('[AI STEP 3] Raw Groq response:', raw);
 
     const json    = extractJSON(raw);
+    console.log('[AI STEP 4] Parsed JSON:', json);
+
     const command = mapToCommand(json);
+    console.log('[AI STEP 5] Final intent returned:', command.type, '| full command:', command);
 
     // A3 — success: reset failure counter
     _consecutiveFailures = 0;
 
     if (command.type === 'UNKNOWN') return command;
 
-    // Validate that task-based intents have a non-empty payload
+    // Validate that task-based intents carry a non-empty payload
     if (command.type !== 'CHAT') {
       const payload = command.task ?? command.query ?? '';
       if (payload.trim() === '') {
@@ -351,7 +397,7 @@ export async function processWithAI(rawText) {
   } catch (error) {
     _consecutiveFailures += 1;
     console.error(
-      `[EcoVoice/AI] Gemini error (failure #${_consecutiveFailures}) — falling back to rule parser:`,
+      `[EcoVoice/AI] Groq error (failure #${_consecutiveFailures}) — falling back to rule parser:`,
       error
     );
 
@@ -359,11 +405,11 @@ export async function processWithAI(rawText) {
     if (_consecutiveFailures >= MAX_FAILURES_BEFORE_WARN) {
       const isRateLimit = error?.status === 429 || String(error?.message).includes('429');
       const message = isRateLimit
-        ? 'Gemini rate limit reached. Task Manager mode is still fully active.'
-        : 'Gemini is currently unavailable. Task Manager mode remains active — all voice commands still work.';
+        ? 'Groq rate limit reached. Task Manager mode is still fully active.'
+        : 'Groq is currently unavailable. Task Manager mode remains active — all voice commands still work.';
 
       return {
-        type:     'GEMINI_UNAVAILABLE',
+        type:     'GEMINI_UNAVAILABLE', // keep this type — App.jsx handles it unchanged
         response: message,
         fallback: parseCommand(rawText),
       };
@@ -374,11 +420,9 @@ export async function processWithAI(rawText) {
 }
 
 /**
- * Check whether Gemini is configured and available.
- * Useful for UI to show "AI mode" indicator.
- *
+ * Check whether Groq is configured and available.
  * @returns {boolean}
  */
 export function isAIAvailable() {
-  return !!(API_KEY && API_KEY !== 'your_gemini_api_key_here');
+  return !!(API_KEY && API_KEY !== 'your_groq_api_key_here');
 }

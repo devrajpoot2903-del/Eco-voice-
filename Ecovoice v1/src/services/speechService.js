@@ -123,6 +123,27 @@ export function speak(text, { onStart, onEnd } = {}) {
     return;
   }
 
+  // Load settings dynamically from localStorage
+  let settings = { voiceEnabled: true, speed: 0.92, volume: 1.0 };
+  try {
+    const raw = window.localStorage.getItem('ecovoice:settings');
+    if (raw) {
+      settings = { ...settings, ...JSON.parse(raw) };
+    }
+  } catch (e) {
+    console.warn('[TTS] Failed to read settings from localStorage:', e);
+  }
+
+  // If voice is disabled, trigger callbacks immediately and skip speaking.
+  if (!settings.voiceEnabled) {
+    console.log('[TTS] Voice feedback is disabled in settings — skipping speak');
+    onStart?.();
+    setTimeout(() => {
+      onEnd?.();
+    }, 100);
+    return;
+  }
+
   console.log(`[TTS] Speaking: "${text.slice(0, 80)}${text.length > 80 ? '…' : ''}"`);
 
   // Cancel anything already speaking
@@ -132,10 +153,19 @@ export function speak(text, { onStart, onEnd } = {}) {
   // This is the key fix for the "silent speak" Chrome bug where cancel() + speak()
   // called in the same tick results in the new utterance being swallowed.
   setTimeout(() => {
+    // Read settings again to ensure the absolute latest values
+    let settingsCurrent = { voiceEnabled: true, speed: 0.92, volume: 1.0 };
+    try {
+      const raw = window.localStorage.getItem('ecovoice:settings');
+      if (raw) {
+        settingsCurrent = { ...settingsCurrent, ...JSON.parse(raw) };
+      }
+    } catch (e) {}
+
     const utterance = new SpeechSynthesisUtterance(text.trim());
-    utterance.rate = 0.92;
+    utterance.rate = settingsCurrent.speed;
     utterance.pitch = 1.0;
-    utterance.volume = 1.0;
+    utterance.volume = settingsCurrent.volume;
     utterance.lang = 'en-US';
 
     // Apply best available voice

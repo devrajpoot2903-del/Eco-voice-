@@ -7,7 +7,7 @@ import { processWithAI, isAIAvailable } from './services/aiCommandProcessor';
 import { useTasks } from './hooks/useTasks';
 
 // ── Stability + Phase D services ──────────────────────────────────────────────
-import { speak } from './services/speechService';
+import { speak, stopSpeaking } from './services/speechService';
 import { recordCommand } from './services/commandHistory';
 import { runHealthCheck } from './utils/systemHealth';
 import { recordUndoAction, popUndoAction } from './services/undoService';
@@ -21,6 +21,11 @@ import DailyProgress from './components/DailyProgress';
 import ActivityFeed from './components/ActivityFeed';
 import HelpPanel from './components/HelpPanel';
 import ConfirmModal from './components/ConfirmModal';
+import TaskCard from './components/TaskCard';
+import CreateTaskModal from './components/CreateTaskModal';
+import HistoryPanel from './components/HistoryPanel';
+import ArchivePanel from './components/ArchivePanel';
+import SettingsPanel from './components/SettingsPanel';
 
 // ── Voice feedback map ────────────────────────────────────────────────────────
 const VOICE_FEEDBACK = {
@@ -47,13 +52,22 @@ export default function App() {
   const [activeNav, setActiveNav] = useState('today');
   const [helpOpen, setHelpOpen] = useState(false);
   const [geminiWarn, setGeminiWarn] = useState(null);
-  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
+  const [confirmConfig, setConfirmConfig] = useState({
+    open: false,
+    title: '',
+    message: '',
+    confirmLabel: 'Confirm',
+    onConfirm: () => {},
+    onCancel: () => {},
+  });
   const [chatMode, setChatMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false); // mobile sidebar toggle
+  const [createTaskOpen, setCreateTaskOpen] = useState(false);
 
   const {
     tasks,
+    archivedTasks,
     addTask,
     deleteByQuery,
     completeByQuery,
@@ -69,6 +83,10 @@ export default function App() {
     uncompleteByIds,
     unpinByIds,
     pinByIds,
+    archiveTask,
+    restoreTask,
+    togglePriority,
+    deleteTask,
   } = useTasks();
 
   // ── A5 — Startup health check ──────────────────────────────────────────────
@@ -98,8 +116,10 @@ export default function App() {
     });
   }, []);
 
-  // ── B5 — DELETE_ALL confirmation ──────────────────────────────────────────
+  // ── B5 — DELETE_ALL / COMPLETE_ALL confirmation ──────────────────────────
   const pendingDeleteAll = useRef(null);
+  const pendingCompleteAll = useRef(null);
+  const pendingCompleteAllSource = useRef('parser');
 
   const executeDeleteAll = useCallback(() => {
     const count = tasksRef.current.length;
@@ -113,13 +133,107 @@ export default function App() {
       recordCommand({ transcript: pendingDeleteAll.current ?? 'delete all', intent: 'DELETE_ALL_TASKS', result: 'ok', source: 'parser' });
     }
     pendingDeleteAll.current = null;
-    setConfirmDeleteAll(false);
+    setConfirmConfig((prev) => ({ ...prev, open: false }));
   }, [deleteAllTasks, aiReply]);
 
   const cancelDeleteAll = useCallback(() => {
     aiReply('Deletion cancelled.');
     pendingDeleteAll.current = null;
-    setConfirmDeleteAll(false);
+    setConfirmConfig((prev) => ({ ...prev, open: false }));
+  }, [aiReply]);
+
+  const executeCompleteAll = useCallback(() => {
+    const count = tasksRef.current.filter((t) => !t.done).length;
+    console.debug('[EcoVoice DEBUG] executeCompleteAll — task count:', count);
+    if (count === 0) {
+      aiReply(VOICE_FEEDBACK.COMPLETE_ALL_TASKS.fail());
+      recordCommand({ transcript: pendingCompleteAll.current ?? 'complete all', intent: 'COMPLETE_ALL_TASKS', result: 'empty', source: pendingCompleteAllSource.current });
+    } else {
+      completeAllTasks();
+      aiReply(VOICE_FEEDBACK.COMPLETE_ALL_TASKS.ok(count));
+      recordCommand({ transcript: pendingCompleteAll.current ?? 'complete all', intent: 'COMPLETE_ALL_TASKS', result: 'ok', source: pendingCompleteAllSource.current });
+    }
+    pendingCompleteAll.current = null;
+    setConfirmConfig((prev) => ({ ...prev, open: false }));
+  }, [completeAllTasks, aiReply]);
+
+  const cancelCompleteAll = useCallback(() => {
+    aiReply('Completion cancelled.');
+    pendingCompleteAll.current = null;
+    setConfirmConfig((prev) => ({ ...prev, open: false }));
+  }, [aiReply]);
+
+  // ── B5 — ARCHIVE_ALL confirmation ─────────────────────────────────────────
+  const pendingArchiveAll = useRef(null);
+
+  const executeArchiveAll = useCallback(() => {
+    const count = tasksRef.current.length;
+    console.debug('[EcoVoice DEBUG] executeArchiveAll — task count:', count);
+    if (count === 0) {
+      aiReply("There are no tasks to archive.");
+      recordCommand({ transcript: pendingArchiveAll.current ?? 'archive all', intent: 'ARCHIVE_ALL_TASKS', result: 'empty', source: 'parser' });
+    } else {
+      // Archive all tasks
+      tasksRef.current.forEach((t) => archiveTask(t.id));
+      aiReply(`All ${count} tasks archived.`);
+      recordCommand({ transcript: pendingArchiveAll.current ?? 'archive all', intent: 'ARCHIVE_ALL_TASKS', result: 'ok', source: 'parser' });
+    }
+    pendingArchiveAll.current = null;
+    setConfirmConfig((prev) => ({ ...prev, open: false }));
+  }, [archiveTask, aiReply]);
+
+  const cancelArchiveAll = useCallback(() => {
+    aiReply('Archiving cancelled.');
+    pendingArchiveAll.current = null;
+    setConfirmConfig((prev) => ({ ...prev, open: false }));
+  }, [aiReply]);
+
+  // ── B5 — PIN_ALL / UNPIN_ALL confirmation ─────────────────────────────────
+  const pendingPinAll = useRef(null);
+  const pendingUnpinAll = useRef(null);
+
+  const executePinAll = useCallback(() => {
+    const liveTasks = tasksRef.current;
+    const pending = liveTasks.filter((t) => !t.pinned && !t.done);
+    if (pending.length === 0) {
+      aiReply("No pending tasks to pin.");
+      recordCommand({ transcript: pendingPinAll.current ?? 'pin all', intent: 'PIN_ALL_TASKS', result: 'empty', source: 'parser' });
+    } else {
+      const ids = pending.map((t) => t.id);
+      pinByIds(ids);
+      aiReply("All pending tasks pinned.");
+      recordCommand({ transcript: pendingPinAll.current ?? 'pin all', intent: 'PIN_ALL_TASKS', result: 'ok', source: 'parser' });
+    }
+    pendingPinAll.current = null;
+    setConfirmConfig((prev) => ({ ...prev, open: false }));
+  }, [pinByIds, aiReply]);
+
+  const cancelPinAll = useCallback(() => {
+    aiReply('Pinning cancelled.');
+    pendingPinAll.current = null;
+    setConfirmConfig((prev) => ({ ...prev, open: false }));
+  }, [aiReply]);
+
+  const executeUnpinAll = useCallback(() => {
+    const liveTasks = tasksRef.current;
+    const pinned = liveTasks.filter((t) => t.pinned && !t.done);
+    if (pinned.length === 0) {
+      aiReply("No pinned tasks to unpin.");
+      recordCommand({ transcript: pendingUnpinAll.current ?? 'unpin all', intent: 'UNPIN_ALL_TASKS', result: 'empty', source: 'parser' });
+    } else {
+      const ids = pinned.map((t) => t.id);
+      unpinByIds(ids);
+      aiReply("All tasks unpinned.");
+      recordCommand({ transcript: pendingUnpinAll.current ?? 'unpin all', intent: 'UNPIN_ALL_TASKS', result: 'ok', source: 'parser' });
+    }
+    pendingUnpinAll.current = null;
+    setConfirmConfig((prev) => ({ ...prev, open: false }));
+  }, [unpinByIds, aiReply]);
+
+  const cancelUnpinAll = useCallback(() => {
+    aiReply('Unpinning cancelled.');
+    pendingUnpinAll.current = null;
+    setConfirmConfig((prev) => ({ ...prev, open: false }));
   }, [aiReply]);
 
   // ── D1 — UNDO executor ────────────────────────────────────────────────────
@@ -165,11 +279,8 @@ export default function App() {
 
   // ── Speech Recognition ─────────────────────────────────────────────────────
   useEffect(() => {
-    const sr = createSpeechRecognition({
-      onStateChange: (nextState) => setMicStatus(nextState),
-
-      onResult: async (text) => {
-        if (!text || text.trim() === '') return;
+    const handleResult = async (text) => {
+      if (!text || text.trim() === '') return;
 
         const tasksBefore = tasksRef.current.length;
         console.group(`[EcoVoice DEBUG] onResult: "${text}"`);
@@ -184,15 +295,22 @@ export default function App() {
 
         let command;
         let source = 'ai';
-        try {
-          command = isAIAvailable()
-            ? await processWithAI(text)
-            : parseCommand(text);
-          if (!isAIAvailable()) source = 'parser';
-        } catch (err) {
-          console.error('[EcoVoice] Command dispatch error:', err);
-          command = { type: 'UNKNOWN' };
-          source = 'error';
+        const localCmd = parseCommand(text);
+        const BULK_INTENTS = ['DELETE_ALL_TASKS', 'COMPLETE_ALL_TASKS', 'ARCHIVE_ALL_TASKS', 'PIN_ALL_TASKS', 'UNPIN_ALL_TASKS'];
+        if (BULK_INTENTS.includes(localCmd.type)) {
+          command = localCmd;
+          source = 'parser';
+        } else {
+          try {
+            command = isAIAvailable()
+              ? await processWithAI(text)
+              : localCmd;
+            if (!isAIAvailable()) source = 'parser';
+          } catch (err) {
+            console.error('[EcoVoice] Command dispatch error:', err);
+            command = { type: 'UNKNOWN' };
+            source = 'error';
+          }
         }
 
         console.log('  Detected intent:', command.type, '| source:', source);
@@ -228,9 +346,19 @@ export default function App() {
 
         if (command.type === 'DELETE_ALL_TASKS') {
           pendingDeleteAll.current = text;
-          setConfirmDeleteAll(true);
+          const msg = text.toLowerCase().includes('permanent')
+            ? 'Are you sure you want to permanently delete all tasks?'
+            : 'Are you sure you want to delete all tasks?';
+          setConfirmConfig({
+            open: true,
+            title: 'Confirm Action',
+            message: msg,
+            confirmLabel: 'Confirm',
+            onConfirm: executeDeleteAll,
+            onCancel: cancelDeleteAll,
+          });
           srRef.current?.enterSpeaking();
-          speak('Are you sure you want to delete all tasks? This cannot be undone.', {
+          speak(msg, {
             onEnd: () => { srRef.current?.startAfterDelay(750); },
           });
           recordCommand({ transcript: text, intent: 'DELETE_ALL_TASKS', result: 'pending_confirm', source });
@@ -238,6 +366,115 @@ export default function App() {
           return;
         }
 
+        if (command.type === 'COMPLETE_ALL_TASKS') {
+          const liveTasks = tasksRef.current;
+          const pending = liveTasks.filter((t) => !t.done).length;
+          if (pending === 0) {
+            aiReply(VOICE_FEEDBACK.COMPLETE_ALL_TASKS.fail());
+            recordCommand({ transcript: text, intent: 'COMPLETE_ALL_TASKS', result: 'empty', source });
+            console.log('  → COMPLETE_ALL_TASKS — empty'); console.groupEnd();
+            return;
+          }
+          pendingCompleteAll.current = text;
+          pendingCompleteAllSource.current = source;
+          const msg = text.toLowerCase().includes('mark')
+            ? 'Are you sure you want to mark all tasks as completed?'
+            : 'Are you sure you want to complete all tasks?';
+          setConfirmConfig({
+            open: true,
+            title: 'Confirm Action',
+            message: msg,
+            confirmLabel: 'Confirm',
+            onConfirm: executeCompleteAll,
+            onCancel: cancelCompleteAll,
+          });
+          srRef.current?.enterSpeaking();
+          speak(msg, {
+            onEnd: () => { srRef.current?.startAfterDelay(750); },
+          });
+          recordCommand({ transcript: text, intent: 'COMPLETE_ALL_TASKS', result: 'pending_confirm', source });
+          console.log('  → COMPLETE_ALL_TASKS — awaiting confirmation'); console.groupEnd();
+          return;
+        }
+
+        if (command.type === 'ARCHIVE_ALL_TASKS') {
+          const liveTasks = tasksRef.current;
+          if (liveTasks.length === 0) {
+            aiReply("There are no tasks to archive.");
+            recordCommand({ transcript: text, intent: 'ARCHIVE_ALL_TASKS', result: 'empty', source });
+            console.log('  → ARCHIVE_ALL_TASKS — empty'); console.groupEnd();
+            return;
+          }
+          pendingArchiveAll.current = text;
+          setConfirmConfig({
+            open: true,
+            title: 'Confirm Action',
+            message: 'Are you sure you want to archive all tasks?',
+            confirmLabel: 'Confirm',
+            onConfirm: executeArchiveAll,
+            onCancel: cancelArchiveAll,
+          });
+          srRef.current?.enterSpeaking();
+          speak('Are you sure you want to archive all tasks?', {
+            onEnd: () => { srRef.current?.startAfterDelay(750); },
+          });
+          recordCommand({ transcript: text, intent: 'ARCHIVE_ALL_TASKS', result: 'pending_confirm', source });
+          console.log('  → ARCHIVE_ALL_TASKS — awaiting confirmation'); console.groupEnd();
+          return;
+        }
+        if (command.type === 'PIN_ALL_TASKS') {
+          const liveTasks = tasksRef.current;
+          const pending = liveTasks.filter((t) => !t.pinned && !t.done);
+          if (pending.length === 0) {
+            aiReply("No pending tasks to pin.");
+            recordCommand({ transcript: text, intent: 'PIN_ALL_TASKS', result: 'empty', source });
+            console.log('  → PIN_ALL_TASKS — empty'); console.groupEnd();
+            return;
+          }
+          pendingPinAll.current = text;
+          setConfirmConfig({
+            open: true,
+            title: 'Confirm Action',
+            message: 'Are you sure you want to pin all tasks?',
+            confirmLabel: 'Confirm',
+            onConfirm: executePinAll,
+            onCancel: cancelPinAll,
+          });
+          srRef.current?.enterSpeaking();
+          speak('Are you sure you want to pin all tasks?', {
+            onEnd: () => { srRef.current?.startAfterDelay(750); },
+          });
+          recordCommand({ transcript: text, intent: 'PIN_ALL_TASKS', result: 'pending_confirm', source });
+          console.log('  → PIN_ALL_TASKS — awaiting confirmation'); console.groupEnd();
+          return;
+        }
+
+        if (command.type === 'UNPIN_ALL_TASKS') {
+          const liveTasks = tasksRef.current;
+          const pinned = liveTasks.filter((t) => t.pinned && !t.done);
+          if (pinned.length === 0) {
+            aiReply("No pinned tasks to unpin.");
+            recordCommand({ transcript: text, intent: 'UNPIN_ALL_TASKS', result: 'empty', source });
+            console.log('  → UNPIN_ALL_TASKS — empty'); console.groupEnd();
+            return;
+          }
+          pendingUnpinAll.current = text;
+          setConfirmConfig({
+            open: true,
+            title: 'Confirm Action',
+            message: 'Are you sure you want to unpin all tasks?',
+            confirmLabel: 'Confirm',
+            onConfirm: executeUnpinAll,
+            onCancel: cancelUnpinAll,
+          });
+          srRef.current?.enterSpeaking();
+          speak('Are you sure you want to unpin all tasks?', {
+            onEnd: () => { srRef.current?.startAfterDelay(750); },
+          });
+          recordCommand({ transcript: text, intent: 'UNPIN_ALL_TASKS', result: 'pending_confirm', source });
+          console.log('  → UNPIN_ALL_TASKS — awaiting confirmation'); console.groupEnd();
+          return;
+        }
         if (command.type === 'UNDO') {
           executeUndo();
           recordCommand({ transcript: text, intent: 'UNDO', result: 'ok', source });
@@ -293,6 +530,15 @@ export default function App() {
           aiReply(SELF_INTRO_TEXT);
           recordCommand({ transcript: text, intent: 'SELF_INTRO', result: 'ok', source });
           console.log('  → Handler: SELF_INTRO'); console.groupEnd();
+          return;
+        }
+
+        // ── Fix #2: CHAT intent handler (Groq conversational replies) ──────────
+        if (command.type === 'CHAT') {
+          const chatResponse = command.response || "I'm here! Ask me anything.";
+          aiReply(chatResponse);
+          recordCommand({ transcript: text, intent: 'CHAT', result: 'ok', source });
+          console.log('  → Handler: CHAT | response:', chatResponse); console.groupEnd();
           return;
         }
 
@@ -388,12 +634,15 @@ export default function App() {
         if (feedbackText) {
           aiReply(feedbackText);
         }
-      },
+      };
 
-      onError: (errorCode) => {
-        console.error('[EcoVoice] Recognition error:', errorCode);
-      },
-    });
+      const sr = createSpeechRecognition({
+        onStateChange: (nextState) => setMicStatus(nextState),
+        onResult: handleResult,
+        onError: (errorCode) => {
+          console.error('[EcoVoice] Recognition error:', errorCode);
+        },
+      });
 
     if (!sr.supported) setUnsupported(true);
     srRef.current = sr;
@@ -413,6 +662,7 @@ export default function App() {
       sr.start();
     } else {
       sr.stop();
+      stopSpeaking();
     }
   };
 
@@ -445,7 +695,7 @@ export default function App() {
           <Sidebar
             activeNav={activeNav}
             onNav={(id) => { setActiveNav(id); setSidebarOpen(false); }}
-            onNewTask={() => setSidebarOpen(false)}
+            onNewTask={() => { setCreateTaskOpen(true); setSidebarOpen(false); }}
           />
         </div>
 
@@ -486,18 +736,72 @@ export default function App() {
           <TopBar
             isListening={isListening}
             onMenuClick={() => setSidebarOpen(true)}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            onHelpClick={() => setHelpOpen(true)}
+            onSettingsClick={() => setActiveNav('settings')}
           />
 
           <div className="flex flex-1 overflow-hidden">
             {/* Task panel */}
             <div className="flex-1 flex flex-col overflow-y-auto px-4 sm:px-6 lg:px-8 pb-6 min-w-0">
-              <VoiceHero status={micStatus} onClick={handleMicClick} lastSpoken={lastSpoken} />
-              <TaskBoard
-                tasks={tasks}
-                onToggle={toggleTask}
-                onTogglePin={togglePin}
-                searchQuery={searchQuery}
-              />
+              {activeNav === 'today' && (
+                <>
+                  <VoiceHero status={micStatus} onClick={handleMicClick} lastSpoken={lastSpoken} />
+                  <TaskBoard
+                    tasks={tasks}
+                    onToggle={toggleTask}
+                    onTogglePin={togglePin}
+                    onTogglePriority={togglePriority}
+                    onArchive={archiveTask}
+                    searchQuery={searchQuery}
+                  />
+                </>
+              )}
+
+              {activeNav === 'upcoming' && (
+                <>
+                  <VoiceHero status={micStatus} onClick={handleMicClick} lastSpoken={lastSpoken} />
+                  <div className="mt-4 sm:mt-6">
+                    <h2 className="text-xl sm:text-2xl font-bold text-stone-800 mb-4 px-1">Upcoming Tasks</h2>
+                    {tasks.filter(t => !t.done).slice(4).length === 0 ? (
+                      <div className="text-center py-12 bg-white rounded-2xl border border-stone-100 p-6">
+                        <p className="text-sm font-semibold text-stone-500">No upcoming tasks.</p>
+                        <p className="text-xs text-stone-400 mt-1">Create more tasks or wait for today's tasks to clear.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-0.5">
+                        {tasks.filter(t => !t.done).slice(4).map((task) => (
+                          <TaskCard
+                            key={task.id}
+                            task={task}
+                            onToggle={toggleTask}
+                            onTogglePin={togglePin}
+                            onTogglePriority={togglePriority}
+                            onArchive={archiveTask}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {activeNav === 'history' && (
+                <HistoryPanel />
+              )}
+
+              {activeNav === 'archive' && (
+                <ArchivePanel
+                  archivedTasks={archivedTasks}
+                  onRestore={restoreTask}
+                  onDelete={deleteTask}
+                />
+              )}
+
+              {activeNav === 'settings' && (
+                <SettingsPanel />
+              )}
             </div>
 
             {/* Aside — hidden on mobile/tablet, visible on lg+ */}
@@ -546,8 +850,10 @@ export default function App() {
             </button>
 
             <button
-              onClick={() => {/* activity drawer future */}}
-              className="flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl text-stone-500 hover:text-forest-700 hover:bg-forest-50 transition-colors"
+              onClick={() => setActiveNav('history')}
+              className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-colors ${
+                activeNav === 'history' ? 'text-forest-700 bg-forest-50' : 'text-stone-500'
+              }`}
               aria-label="Activity"
             >
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -561,13 +867,19 @@ export default function App() {
 
       <HelpPanel open={helpOpen} onClose={() => setHelpOpen(false)} />
 
+      <CreateTaskModal
+        open={createTaskOpen}
+        onClose={() => setCreateTaskOpen(false)}
+        onSave={(label, opts) => addTask(label, { source: 'manual', priority: opts.priority, pinned: opts.pinned })}
+      />
+
       <ConfirmModal
-        open={confirmDeleteAll}
-        title="Delete All Tasks?"
-        message="This action cannot be undone. All your tasks will be permanently removed."
-        confirmLabel="Delete All"
-        onConfirm={executeDeleteAll}
-        onCancel={cancelDeleteAll}
+        open={confirmConfig.open}
+        title={confirmConfig.title}
+        message={confirmConfig.message}
+        confirmLabel={confirmConfig.confirmLabel}
+        onConfirm={confirmConfig.onConfirm}
+        onCancel={confirmConfig.onCancel}
       />
     </div>
   );
