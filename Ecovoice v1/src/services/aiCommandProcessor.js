@@ -28,7 +28,7 @@ import { parseCommand } from './commandParser';
 // ─── Groq client ───────────────────────────────────────────────────────────────
 
 const API_KEY = import.meta.env.VITE_GROQ_API_KEY;
-const MODEL   = 'llama-3.3-70b-versatile';
+const MODEL = "openai/gpt-oss-20b";
 
 // ─── Startup key detection log ────────────────────────────────────────────────
 if (API_KEY && API_KEY !== 'your_groq_api_key_here') {
@@ -41,7 +41,7 @@ let _groq = null;
 function getGroq() {
   if (!_groq && API_KEY && API_KEY !== 'your_groq_api_key_here') {
     _groq = new Groq({
-      apiKey:    API_KEY,
+      apiKey: API_KEY,
       dangerouslyAllowBrowser: true, // required for Vite/browser environments
     });
   }
@@ -165,7 +165,7 @@ export function clearSessionHistory() {
 
 function pushHistory(userText, modelJSON) {
   _sessionHistory.push(
-    { role: 'user',  parts: [{ text: userText }] },
+    { role: 'user', parts: [{ text: userText }] },
     { role: 'model', parts: [{ text: JSON.stringify(modelJSON) }] },
   );
   // Trim to window: MAX_HISTORY pairs = MAX_HISTORY * 2 messages
@@ -180,14 +180,14 @@ function pushHistory(userText, modelJSON) {
  */
 function buildMessages(userText) {
   const historyMessages = _sessionHistory.map((entry) => ({
-    role:    entry.role === 'model' ? 'assistant' : 'user',
+    role: entry.role === 'model' ? 'assistant' : 'user',
     content: entry.parts[0].text,
   }));
 
   return [
     { role: 'system', content: SYSTEM_PROMPT },
     ...historyMessages,
-    { role: 'user',   content: userText },
+    { role: 'user', content: userText },
   ];
 }
 
@@ -197,7 +197,7 @@ function extractJSON(raw) {
   if (!raw) return null;
   const stripped = raw.replace(/```(?:json)?/gi, '').trim();
   const start = stripped.indexOf('{');
-  const end   = stripped.lastIndexOf('}');
+  const end = stripped.lastIndexOf('}');
   if (start === -1 || end === -1) return null;
   try {
     return JSON.parse(stripped.slice(start, end + 1));
@@ -209,17 +209,17 @@ function extractJSON(raw) {
 // ─── Missing target helper ────────────────────────────────────────────────────
 
 const MISSING_TARGET_PROMPTS = {
-  DELETE_TASK:     'Which task would you like me to delete?',
-  COMPLETE_TASK:   'Which task should I mark as complete?',
+  DELETE_TASK: 'Which task would you like me to delete?',
+  COMPLETE_TASK: 'Which task should I mark as complete?',
   UNCOMPLETE_TASK: 'Which task would you like to move back to pending?',
-  PIN_TASK:        'Which task would you like to pin?',
-  UNPIN_TASK:      'Which task should I unpin?',
-  SET_PRIORITY:    'Which task should I update the priority for?',
+  PIN_TASK: 'Which task would you like to pin?',
+  UNPIN_TASK: 'Which task should I unpin?',
+  SET_PRIORITY: 'Which task should I update the priority for?',
 };
 
 function missingTarget(intent) {
   return {
-    type:   'MISSING_TASK_TARGET',
+    type: 'MISSING_TASK_TARGET',
     intent,
     prompt: MISSING_TARGET_PROMPTS[intent] ?? 'Which task did you mean?',
   };
@@ -237,8 +237,8 @@ function mapToCommand(json) {
   switch (json.intent) {
     case 'CREATE_TASK':
       return {
-        type:     'CREATE_TASK',
-        task:     json.task ?? '',
+        type: 'CREATE_TASK',
+        task: json.task ?? '',
         priority: json.priority === 'high' ? 'high' : 'normal',
         response,
       };
@@ -277,7 +277,7 @@ function mapToCommand(json) {
       const query = (json.task ?? '').trim();
       if (!query) return missingTarget('SET_PRIORITY');
       return {
-        type:     'SET_PRIORITY',
+        type: 'SET_PRIORITY',
         query,
         priority: json.priority === 'high' ? 'high' : 'normal',
         response,
@@ -320,7 +320,7 @@ const MAX_FAILURES_BEFORE_WARN = 2;
 export function groqStatus() {
   return {
     available: isAIAvailable(),
-    failing:   _consecutiveFailures >= MAX_FAILURES_BEFORE_WARN,
+    failing: _consecutiveFailures >= MAX_FAILURES_BEFORE_WARN,
   };
 }
 
@@ -358,10 +358,10 @@ export async function processWithAI(rawText) {
     console.log('[AI STEP 2] Sending request to Groq. Message count:', messages.length);
 
     const completion = await groq.chat.completions.create({
-      model:           MODEL,
+      model: MODEL,
       messages,
-      temperature:     0.2,   // low = deterministic JSON
-      max_tokens:      300,   // JSON responses are short
+      temperature: 0.2,   // low = deterministic JSON
+      max_tokens: 300,   // JSON responses are short
       response_format: { type: 'json_object' }, // enforce pure JSON output
     });
 
@@ -369,7 +369,7 @@ export async function processWithAI(rawText) {
 
     console.log('[AI STEP 3] Raw Groq response:', raw);
 
-    const json    = extractJSON(raw);
+    const json = extractJSON(raw);
     console.log('[AI STEP 4] Parsed JSON:', json);
 
     const command = mapToCommand(json);
@@ -409,7 +409,7 @@ export async function processWithAI(rawText) {
         : 'Groq is currently unavailable. Task Manager mode remains active — all voice commands still work.';
 
       return {
-        type:     'GEMINI_UNAVAILABLE', // keep this type — App.jsx handles it unchanged
+        type: 'GEMINI_UNAVAILABLE', // keep this type — App.jsx handles it unchanged
         response: message,
         fallback: parseCommand(rawText),
       };
